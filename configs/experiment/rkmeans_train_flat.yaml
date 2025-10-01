@@ -167,7 +167,7 @@ callbacks:
     _target_: lightning.pytorch.callbacks.ModelCheckpoint
     dirpath: ${paths.output_dir}/checkpoints
     filename: checkpoint_{epoch:03d}_{step:06d}
-    monitor: train/loss
+    monitor: train/loss # 记录要监控的指标
     verbose: true
     save_last: null
     save_top_k: 1

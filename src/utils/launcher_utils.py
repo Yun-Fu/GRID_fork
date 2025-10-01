@@ -125,7 +125,7 @@ def initialize_pipeline_modules(
         f"Instantiating datamodule <{cfg.data_loading.datamodule._target_}>"
     )
     datamodule: LightningDataModule = hydra.utils.instantiate(
-        cfg.data_loading.datamodule
+        cfg.data_loading.datamodule # 专门用不同的配置文件初始化整个流程
     )
 
     command_line_logger.info(f"Instantiating model <{cfg.model._target_}>")

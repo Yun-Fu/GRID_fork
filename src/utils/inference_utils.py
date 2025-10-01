@@ -223,7 +223,7 @@ class LocalPickleWriter(BaseBufferedWriter):
         )
 
     @retry()
-    def on_predict_end(
+    def on_predict_end(# 预测解释的时候调用
         self,
         trainer: Trainer,
         pl_module: LightningModule,

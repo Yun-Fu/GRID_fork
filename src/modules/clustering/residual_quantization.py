@@ -82,9 +82,9 @@ class ResidualQuantization(LightningModule):
         self.track_residuals = track_residuals or self.verbose
 
         self.normalization_layer = normalization_layer
-        self.encoder = encoder
+        self.encoder = encoder # 构造编码和译码器
         self.decoder = decoder
-        self.quantization_layer_list = self._instantiate_quantization_layer_list(
+        self.quantization_layer_list = self._instantiate_quantization_layer_list( 
             quantization_layer,
             quantization_layer_list,
             n_layers,
@@ -286,8 +286,8 @@ class ResidualQuantization(LightningModule):
         """
         input_embeddings = model_input.transformed_features["input_embedding"].to(
             self.device
-        )
-        normalized_input_embeddings = self.normalization_layer(input_embeddings)
+        ) # 先进行norm，以便于后续重构误差不会很大
+        normalized_input_embeddings = self.normalization_layer(input_embeddings) 
         encoded_embeddings = self.encoder(normalized_input_embeddings)
         (
             cluster_ids,
@@ -340,6 +340,7 @@ class ResidualQuantization(LightningModule):
             self.quantization_loss_weight * quantization_loss
             + self.reconstruction_loss_weight * reconstruction_loss
         )
+        
         self.train_loss(loss)
         self.train_quantization_loss(quantization_loss)
         self.train_reconstruction_loss(reconstruction_loss)
@@ -627,6 +628,7 @@ class ResidualQuantization(LightningModule):
         mse_metric(mse)
 
     def validation_step(self, batch: ItemData, batch_idx: int):
+    # def eval_step(self, batch: ItemData, batch_idx: int):
         """
         Perform a single validation step on a batch of data.
 
@@ -650,8 +652,8 @@ class ResidualQuantization(LightningModule):
             "val/frac_unique_ids": self.val_frac_unique_ids,
             "val/mse": self.val_mse,
         }
-        self.log_dict(
-            val_dict_to_log,
+        self.log_dict( # self.log_dict 把验证的指标自动保存到 logger 和 callbacks 里了
+            val_dict_to_log, # 便于根据验证的指标自动确定最优的模型
             on_step=False,
             on_epoch=True,
             prog_bar=True,

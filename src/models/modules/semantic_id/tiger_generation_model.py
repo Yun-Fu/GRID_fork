@@ -60,7 +60,7 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
         self.embedding_dim = embedding_dim
         self.num_hierarchies = num_hierarchies
         self.should_check_prefix = should_check_prefix
-        if codebooks != None:
+        if codebooks != None:# codebooks是为了用来检测是否是合格的前缀的
             self.codebooks = codebooks.t()
             assert (
                 self.codebooks.size(1) == num_hierarchies
@@ -146,7 +146,7 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
             num_embeddings=num_embeddings,  # type: ignore
             embedding_dim=embedding_dim,  # type: ignore
         )
-        return table
+        return table  
 
     def _is_kv_cache_valid(
         self, kv_cache: Union[Tuple, DynamicCache, EncoderDecoderCache]
@@ -187,21 +187,21 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
 
         # Calculate how many times the full offset pattern needs to repeat
         num_repeats = (
-            num_cols + num_hierarchies - 1
+            num_cols + num_hierarchies - 1 # 可能会遇见除不尽的情况，比如decoder不是完整的层次，所以要-1
         ) // num_hierarchies  # Integer division to handle cases where num_cols is not a multiple of num_hierarchies
 
         # Repeat the offsets and slice to match the number of columns
-        repeated_offsets = offsets.repeat(num_repeats)[:num_cols]
+        repeated_offsets = offsets.repeat(num_repeats)[:num_cols]# 每个语义id加上偏移量
 
         # Add the repeated offsets to each row using broadcasting
         input_sids_with_offsets = input_sids + repeated_offsets
         if attention_mask is not None:
-            input_sids_with_offsets = input_sids_with_offsets * attention_mask
+            input_sids_with_offsets = input_sids_with_offsets * attention_mask # 有些位置是pad得mask掉？
         return input_sids_with_offsets
 
     def _check_valid_prefix(
         self, prefix: torch.Tensor, batch_size: int = 100000
-    ) -> torch.Tensor:
+    ) -> torch.Tensor: # 也是分成batch来比对的
         """
         Checks if a given prefix is a valid prefix of the codebooks.
 
@@ -275,7 +275,7 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
         """
 
         # pruning the beams that cannot be mapped to a valid item
-        if self.should_check_prefix:
+        if self.should_check_prefix:# 检查前缀是否合规
             if generated_ids is None:
                 valid_prefix_mask = self._check_valid_prefix(
                     torch.arange(
@@ -302,15 +302,15 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
                         dim=1,
                     )
                 ).reshape(-1, self.num_embeddings_per_hierarchy)
-            candidate_logits[~valid_prefix_mask] = float("-inf")
+            candidate_logits[~valid_prefix_mask] = float("-inf") # 为啥这里是两次呢？？
 
         candidate_logits = torch.nn.functional.softmax(candidate_logits, dim=-1)
-        proba, indices = torch.sort(candidate_logits, descending=True)
+        proba, indices = torch.sort(candidate_logits, descending=True)#  最终是排好顺序进行返回的
 
         if generated_ids is None:
             proba_topk, indices_topk = (
                 proba[:, : self.top_k_for_generation],
-                indices[:, : self.top_k_for_generation],
+                indices[:, : self.top_k_for_generation],# 过滤掉非法字符后再取前topk？那之前的topk是怎么取的？
             )
             generated_ids = indices_topk.unsqueeze(-1)
             # we need to overwrite the cache because we expanded the beam width from bsz to bsz * beam_width
@@ -329,7 +329,7 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
                 indices[:, : self.num_embeddings_per_hierarchy],
             )
             proba, indices = proba.reshape(
-                -1, self.top_k_for_generation * self.num_embeddings_per_hierarchy
+                -1, self.top_k_for_generation * self.num_embeddings_per_hierarchy# 每一层的所有候选？直接在所有后续里面挑
             ), indices.reshape(
                 -1, self.top_k_for_generation * self.num_embeddings_per_hierarchy
             )
@@ -384,15 +384,15 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
         label_data: SequentialModuleLabelData = batch[1]
         _, loss = self.model_step(model_input=model_input, label_data=label_data)
 
-        generated_ids, marginal_probs = self.generate(
+        generated_ids, marginal_probs = self.generate(# 生成译码的semid进行评测
             attention_mask=model_input.mask,
             **{
                 self.feature_to_model_input_map.get(k, k): v
                 for k, v in model_input.transformed_sequences.items()
             },
         )
-
-        self.evaluator(
+        # 把验证指标ndcg@5写入callbacks，并保存最优验证模型
+        self.evaluator( 
             marginal_probs=marginal_probs,
             generated_ids=generated_ids,
             # TODO: (lneves) hardcoded for now, will need to change for multiple features
@@ -412,7 +412,7 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
         Args:
             is_training (bool): Whether the model is in training mode or not.
         """
-        if is_training:
+        if is_training:# 就是train和eval需要外部自己手动调用一下罢了
             if self.decoder != None:
                 self.decoder.decoder.is_training = True
                 self.decoder.decoder.train()
@@ -466,7 +466,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
 
     def __init__(
         self,
-        top_k_for_generation: int = 10,
+        top_k_for_generation: int = 10, # 默认是10就够了？？
         codebooks: torch.Tensor = None,
         embedding_dim: int = None,
         num_hierarchies: int = None,
@@ -517,11 +517,11 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         )
 
         self.encoder = SemanticIDEncoderModule(
-            encoder=self.encoder,
+            encoder=self.encoder,# encoder要加位置编码吗？
         )
 
         # bos_token used to prompt the decoder to generate the first token
-        bos_token = torch.nn.Parameter(
+        bos_token = torch.nn.Parameter(# 
             torch.randn(1, self.embedding_dim), requires_grad=True
         )
 
@@ -535,7 +535,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
                         self.num_embeddings_per_hierarchy,
                         bias=False,
                     )
-                    for _ in range(self.num_hierarchies)
+                    for _ in range(self.num_hierarchies) # 每层用不一样的投影器进行译码！因为每层是不同的语义信息！！！
                 ]
             ),
         )
@@ -572,7 +572,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         )
 
         # separation token for the encoder to differentiate between items
-        self.sep_token = (
+        self.sep_token = (#？？切分符？？单独一个区分不同的token？？
             torch.nn.Parameter(torch.randn(1, self.embedding_dim), requires_grad=True)
             if should_add_sep_token
             else None
@@ -598,24 +598,24 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
 
         # we shift the IDs here to match the hierarchy structure
         # so that we can use a single embedding table to store the embeddigns for all hierarchies
-        shifted_sids = self._add_repeating_offset_to_rows(
+        shifted_sids = self._add_repeating_offset_to_rows(# 把原始层次id进行还原成真实的
             input_sids=input_ids,
             codebook_size=self.num_embeddings_per_hierarchy,
             num_hierarchies=self.num_hierarchies,
             attention_mask=attention_mask,
         )
         inputs_embeds_for_encoder = self.get_embedding_table(table_name="encoder")(
-            shifted_sids
+            shifted_sids # 层次化语义id变成拉平后的全局id，包含pad嘛？
         )
 
         if self.sep_token is not None:
             (
                 inputs_embeds_for_encoder,
                 attention_mask,
-            ) = self._inject_sep_token_between_sids(
+            ) = self._inject_sep_token_between_sids( # 在语义id之间新增一个seqtoken标识切分不同的sid，不在词表内？是单独的？
                 id_embeddings=inputs_embeds_for_encoder,
                 attention_mask=attention_mask,
-                sep_token=self.sep_token,
+                sep_token=self.sep_token,# 不在词表内，是单独的
                 num_hierarchies=self.num_hierarchies,
             )
 
@@ -626,12 +626,12 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             user_id = user_id[:, 0]
 
             # TODO (clark): here we assume remainder hashing, which is different from LSH hashing used in TIGER.
-            user_embeds = self.user_embedding(
+            user_embeds = self.user_embedding(# 进行取余数hash，不是完全的用原始的id
                 torch.remainder(user_id, self.user_embedding.num_embeddings)
             )
 
             # prepending the user_id embedding to the input senquence
-            inputs_embeds_for_encoder = torch.cat(
+            inputs_embeds_for_encoder = torch.cat(# user+item后一起进行前向
                 [
                     user_embeds.unsqueeze(1),
                     inputs_embeds_for_encoder,
@@ -639,7 +639,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
                 dim=1,
             )
             # prepending 1 to attention mask as we introduce user embedding in the first column
-            user_attention_mask = torch.ones(
+            user_attention_mask = torch.ones(# mask处理user
                 attention_mask.size(0), 1, device=attention_mask.device
             )
             attention_mask_for_encoder = torch.cat(
@@ -688,7 +688,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
                 num_hierarchies=self.num_hierarchies,
                 attention_mask=torch.ones_like(future_ids, device=future_ids.device)
                 if attention_mask is None
-                else attention_mask,
+                else attention_mask, # 不用管mask？？？上面那个只是在转换而已？
             )
             inputs_embeds_for_decoder = self.get_embedding_table(table_name="decoder")(
                 shifted_future_sids
@@ -719,7 +719,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
                 # we only need the last token in the decoder input
                 inputs_embeds_for_decoder = inputs_embeds_for_decoder[:, -1:, :]
         # this is the beginning of generation, we start from bos token
-        else:
+        else:# 刚开始第一步的时候没有输入？所以手动添加一个bos？
             inputs_embeds_for_decoder = self.decoder.bos_token.unsqueeze(0).expand(
                 encoder_output.size(0), 1, -1
             )
@@ -752,10 +752,10 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         # getting encoder output
         # we only need to do this once because we have decoder
         # to do auto-regressive generation
-        encoder_output, encoder_attention_mask = self.encoder_forward_pass(
+        encoder_output, encoder_attention_mask = self.encoder_forward_pass(# encoder只用前向一次，译码器采用前向多次？逐层前向？
             attention_mask=attention_mask,
             input_ids=input_ids,
-            user_id=user_id,
+            user_id=user_id,# 这里同时输入两种id是怎么做词表映射的？
         )
 
         # initilize cached generated ids to None
@@ -764,7 +764,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
 
         # initialize kv cache
         past_key_values = EncoderDecoderCache(
-            self_attention_cache=DynamicCache(), cross_attention_cache=DynamicCache()
+            self_attention_cache=DynamicCache(), cross_attention_cache=DynamicCache()# 交叉是decoder的每层都交叉吗？还是self完之后再交叉？
         )
 
         for hierarchy in range(self.num_hierarchies):
@@ -807,7 +807,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             latest_output_representation = decoder_output[:, -1, :]
 
             # # calculating the logits for the next token
-            candidate_logits = self.decoder.decoder_mlp[hierarchy](
+            candidate_logits = self.decoder.decoder_mlp[hierarchy](# 每一层用的投影曾是不一样的？？
                 latest_output_representation
             )  # shape: (batch_size * top_k, num_embeddings in the hierarchy)
 
@@ -816,7 +816,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
                 marginal_log_prob,
                 past_key_values,
             ) = self._beam_search_one_step(
-                candidate_logits=candidate_logits,
+                candidate_logits=candidate_logits,# 这里
                 generated_ids=generated_ids,
                 marginal_log_prob=marginal_log_prob,
                 past_key_values=past_key_values,
@@ -852,7 +852,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         )
 
         decoder_output = self.decoder_forward_pass(
-            future_ids=future_ids,
+            future_ids=future_ids,# 这里好像还没有加上bos？得在里面去见加？
             attention_mask=attention_mask_decoder,
             encoder_output=encoder_output,
             attention_mask_for_encoder=attention_mask_for_encoder,
@@ -860,7 +860,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         )
         return decoder_output
 
-    def get_embedding_table(self, table_name: str, hierarchy: Optional[int] = None):
+    def get_embedding_table(self, table_name: str, hierarchy: Optional[int] = None):#得到第几层的词表？
         """
         Get the embedding table for the given table name and hierarchy.
         Args:
@@ -869,30 +869,31 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         """
         # here we assume the encoder and decoder share the same embedding table
         # we can have flexible embedding table in the future
-        if table_name == "encoder":
+        if table_name == "encoder":# 当前编码器和译码器都用的相同的id table
             embedding_table = self.item_sid_embedding_table_encoder
         elif table_name == "decoder":
             embedding_table = self.item_sid_embedding_table_encoder
 
-        if hierarchy is not None:
+        if hierarchy is not None:# 只要某一层的
             return embedding_table(
                 torch.arange(
-                    hierarchy * self.num_embeddings_per_hierarchy,
+                    hierarchy * self.num_embeddings_per_hierarchy,#啥意思？每层的词表还是单独的？
                     (hierarchy + 1) * self.num_embeddings_per_hierarchy,
                 ).to(self.device)
             )
         return embedding_table
 
     def predict_step(self, batch: SequentialModelInputData):
+        # 载入test_loader，预测test集合中的物品的topk 语义id
         generated_sids, _ = self.model_step(batch)
         ids = [
             id.item() if isinstance(id, torch.Tensor) else id
             for id in batch.user_id_list
         ]
-        model_output = OneKeyPerPredictionOutput(
+        model_output = OneKeyPerPredictionOutput( 
             keys=ids,
             predictions=generated_sids,
-            key_name=self.prediction_key_name,
+            key_name=self.prediction_key_name, 
             prediction_name=self.prediction_value_name,
         )
         return model_output
@@ -916,19 +917,20 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             generated_ids, marginal_probs = self.generate(
                 attention_mask=model_input.mask,
                 **{
-                    self.feature_to_model_input_map.get(k, k): v
-                    for k, v in model_input.transformed_sequences.items()
+                    self.feature_to_model_input_map.get(k, k): v # 这里的转换是在干嘛？？
+                    for k, v in model_input.transformed_sequences.items() # 这里是要把item_ids对应到input_ids？只是改变key的对应关系，不改变
                 },
             )
             return generated_ids, 0  # returning 0 here because we don't have a loss
 
         fut_ids = None
-        for label in label_data.labels:
+        
+        for label in label_data.labels:# 没明白数据类型到底是啥？为什么要for？这里的输入是已经加过bos了嘛？
             curr_label = label_data.labels[label]
             fut_ids = curr_label.reshape(model_input.mask.size(0), -1)
         # here we pass labels in to the forward function
         # because the decoder is causal and we are doing shifted prediction
-        model_output = self.forward(
+        model_output = self.forward( # 输入semid,得到对应hidden隐表示h
             attention_mask_encoder=model_input.mask,
             future_ids=fut_ids,
             **{
@@ -939,11 +941,11 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
 
         # we prepended a bos token to the decoder input
         # so we need to remove the last token in the output
-        model_output = model_output[:, :-1]
+        model_output = model_output[:, :-1]# 去掉最后一个
 
         # the label locations is shared for all semantic id hierarchies
         loss = 0
-        for hierarchy in range(self.num_hierarchies):
+        for hierarchy in range(self.num_hierarchies):# 不同层semid译码用不同mlp
 
             input = self.decoder.decoder_mlp[hierarchy](model_output[:, hierarchy])
             loss += self.loss_function(
@@ -1022,7 +1024,7 @@ class SemanticIDDecoderModule(torch.nn.Module):
             past_key_values=past_key_values,
         )
 
-        embeddings = decoder_outputs.last_hidden_state
+        embeddings = decoder_outputs.last_hidden_state # 只用最后一个隐表示计算损失
 
         if use_cache:
             return embeddings, decoder_outputs.past_key_values
@@ -1047,11 +1049,11 @@ class SemanticIDEncoderModule(torch.nn.Module):
         """
         super().__init__()
 
-        self.encoder = encoder
+        self.encoder = encoder # encoder和词表分词器是可以剥离的，并不是一定要联系起来的？
         embedding_table_dim = find_module_shape(self.encoder, "embed_tokens")
         num_embeddings, embedding_dim = embedding_table_dim
 
-        self.num_embeddings_per_hierarchy = num_embeddings
+        self.num_embeddings_per_hierarchy = num_embeddings # 定义这个有什么用呢？
         self.embedding_dim = embedding_dim
         # TODO (clark): take care of chunky position encoding
 
@@ -1060,7 +1062,7 @@ class SemanticIDEncoderModule(torch.nn.Module):
         delete_module(self.encoder, "shared")
         reset_parameters(self.encoder)
 
-    def forward(
+    def forward(# encoder最后只会返回每个token的hidden，不会返回logits，所以还是可以的，输出词表
         self,
         attention_mask: torch.Tensor,
         sequence_embedding: torch.Tensor,
